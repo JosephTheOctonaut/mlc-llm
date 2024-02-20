@@ -267,6 +267,8 @@ struct FunctionTable {
           get_global_func("vm.builtin.paged_attention_kv_cache_begin_forward");
       this->kv_cache_end_forward_func_ =
           get_global_func("vm.builtin.paged_attention_kv_cache_end_forward");
+      this->fkvcache_array_popn_ = get_global_func("vm.builtin.paged_attention_kv_cache_popn");
+      support_backtracking_kv_ = true;
     } else {
       this->create_kv_cache_func_ = mod_get_func("create_kv_cache");
       if (this->create_kv_cache_func_ == nullptr) {
@@ -1289,7 +1291,11 @@ class LLMChat {
           output_message_ = tokenizer_->Decode(output_ids_);
         }
         // resize kv to remove the context
-        ft_.fkvcache_array_popn_(kv_cache_, backoff);
+        if (ft_.use_paged_kv_cache) {
+          ft_.fkvcache_array_popn_(kv_cache_, /*seq_id=*/0, backoff);
+        } else {
+          ft_.fkvcache_array_popn_(kv_cache_, backoff);
+        }
         total_seq_len_ -= backoff;
       }
     }
@@ -1319,7 +1325,8 @@ class LLMChat {
           IntTuple seq_ids_tuple({0});
           ShapeTuple input_len_shape = ShapeTuple({static_cast<int64_t>(input_tokens.size())});
           ft_.kv_cache_begin_forward_func_(kv_cache_, seq_ids_tuple, input_len_shape);
-          ret = ft_.prefill_func_(input_data, kv_cache_, params_);
+          auto embed = ft_.embed_func_(input_data, params_);
+          ret = ft_.prefill_func_(embed, kv_cache_, params_);
           ft_.kv_cache_end_forward_func_(kv_cache_);
         } else {
           ShapeTuple cur_pos_shape = ShapeTuple({cur_pos});
@@ -1354,7 +1361,8 @@ class LLMChat {
             IntTuple seq_ids_tuple({0});
             IntTuple append_length({1});
             ft_.kv_cache_begin_forward_func_(kv_cache_, seq_ids_tuple, append_length);
-            ret = ft_.decode_func_(input_data, kv_cache_, params_);
+            auto embed = ft_.embed_func_(input_data, params_);
+            ret = ft_.decode_func_(embed, kv_cache_, params_);
             ft_.kv_cache_end_forward_func_(kv_cache_);
           } else {
             ret = ft_.decode_func_(input_data, pos_shape, kv_cache_, params_);

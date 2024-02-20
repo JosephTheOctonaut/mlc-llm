@@ -8,6 +8,7 @@ from tvm.relax.frontend import nn
 from mlc_chat.loader import ExternMapping, QuantizeMapping
 from mlc_chat.quantization.quantization import Quantization
 
+from .baichuan import baichuan_loader, baichuan_model, baichuan_quantization
 from .gpt2 import gpt2_loader, gpt2_model, gpt2_quantization
 from .gpt_bigcode import gpt_bigcode_loader, gpt_bigcode_model, gpt_bigcode_quantization
 from .gpt_neox import gpt_neox_loader, gpt_neox_model, gpt_neox_quantization
@@ -16,6 +17,7 @@ from .mistral import mistral_loader, mistral_model, mistral_quantization
 from .mixtral import mixtral_loader, mixtral_model, mixtral_quantization
 from .phi import phi_loader, phi_model, phi_quantization
 from .qwen import qwen_loader, qwen_model, qwen_quantization
+from .qwen2 import qwen2_loader, qwen2_model, qwen2_quantization
 from .stable_lm import stablelm_loader, stablelm_model, stablelm_quantization
 
 ModelConfig = Any
@@ -89,6 +91,7 @@ MODELS: Dict[str, Model] = {
         quantize={
             "group-quant": mistral_quantization.group_quant,
             "no-quant": mistral_quantization.no_quant,
+            "ft-quant": mistral_quantization.ft_quant,
         },
     ),
     "gpt2": Model(
@@ -102,6 +105,7 @@ MODELS: Dict[str, Model] = {
         quantize={
             "no-quant": gpt2_quantization.no_quant,
             "group-quant": gpt2_quantization.group_quant,
+            "ft-quant": gpt2_quantization.ft_quant,
         },
     ),
     "mixtral": Model(
@@ -115,6 +119,7 @@ MODELS: Dict[str, Model] = {
         quantize={
             "no-quant": mixtral_quantization.no_quant,
             "group-quant": mixtral_quantization.group_quant,
+            "ft-quant": mixtral_quantization.ft_quant,
         },
     ),
     "gpt_neox": Model(
@@ -128,6 +133,7 @@ MODELS: Dict[str, Model] = {
         quantize={
             "no-quant": gpt_neox_quantization.no_quant,
             "group-quant": gpt_neox_quantization.group_quant,
+            "ft-quant": gpt_neox_quantization.ft_quant,
         },
     ),
     "gpt_bigcode": Model(
@@ -141,6 +147,7 @@ MODELS: Dict[str, Model] = {
         quantize={
             "no-quant": gpt_bigcode_quantization.no_quant,
             "group-quant": gpt_bigcode_quantization.group_quant,
+            "ft-quant": gpt_bigcode_quantization.ft_quant,
         },
     ),
     "phi-msft": Model(
@@ -154,6 +161,7 @@ MODELS: Dict[str, Model] = {
         quantize={
             "no-quant": phi_quantization.no_quant,
             "group-quant": phi_quantization.group_quant,
+            "ft-quant": phi_quantization.ft_quant,
         },
     ),
     "phi": Model(
@@ -167,6 +175,7 @@ MODELS: Dict[str, Model] = {
         quantize={
             "no-quant": phi_quantization.no_quant,
             "group-quant": phi_quantization.group_quant,
+            "ft-quant": phi_quantization.ft_quant,
         },
     ),
     "qwen": Model(
@@ -180,6 +189,21 @@ MODELS: Dict[str, Model] = {
         quantize={
             "no-quant": qwen_quantization.no_quant,
             "group-quant": qwen_quantization.group_quant,
+            "ft-quant": qwen_quantization.ft_quant,
+        },
+    ),
+    "qwen2": Model(
+        name="qwen2",
+        model=qwen2_model.QWen2LMHeadModel,
+        config=qwen2_model.QWen2Config,
+        source={
+            "huggingface-torch": qwen2_loader.huggingface,
+            "huggingface-safetensor": qwen2_loader.huggingface,
+        },
+        quantize={
+            "no-quant": qwen2_quantization.no_quant,
+            "group-quant": qwen2_quantization.group_quant,
+            "ft-quant": qwen2_quantization.ft_quant,
         },
     ),
     "stablelm_epoch": Model(
@@ -193,6 +217,21 @@ MODELS: Dict[str, Model] = {
         quantize={
             "no-quant": stablelm_quantization.no_quant,
             "group-quant": stablelm_quantization.group_quant,
+            "ft-quant": stablelm_quantization.ft_quant,
+        },
+    ),
+    "baichuan": Model(
+        name="baichuan",
+        model=baichuan_model.BaichuanForCausalLM,
+        config=baichuan_model.BaichuanConfig,
+        source={
+            "huggingface-torch": baichuan_loader.huggingface,
+            "huggingface-safetensor": baichuan_loader.huggingface,
+        },
+        quantize={
+            "no-quant": baichuan_quantization.no_quant,
+            "group-quant": baichuan_quantization.group_quant,
+            "ft-quant": baichuan_quantization.ft_quant,
         },
     ),
 }

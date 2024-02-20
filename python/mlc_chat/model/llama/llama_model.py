@@ -2,6 +2,7 @@
 Implementation for Llama2 architecture.
 TODO: add docstring
 """
+
 import dataclasses
 from typing import Any, Dict, Optional
 
@@ -10,7 +11,7 @@ from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
 from mlc_chat import op as op_ext
-from mlc_chat.nn import FlashInferPagedKVCache, PagedKVCache, RopeMode, TIRPagedKVCache
+from mlc_chat.nn import PagedKVCache, RopeMode
 from mlc_chat.support import logging
 from mlc_chat.support import tensor_parallel as tp
 from mlc_chat.support.config import ConfigBase
@@ -208,10 +209,10 @@ class LlamaModel(nn.Module):
         self.norm = nn.RMSNorm(config.hidden_size, -1, config.rms_norm_eps, bias=False)
         self.tensor_parallel_shards = config.tensor_parallel_shards
 
-    def forward(self, input_ids: Tensor, paged_kv_cache: PagedKVCache):
+    def forward(self, input_embed: Tensor, paged_kv_cache: PagedKVCache):
         if self.tensor_parallel_shards > 1:
-            input_ids = op.ccl_broadcast_from_worker0(input_ids)
-        hidden_states = self.embed_tokens(input_ids)
+            input_embed = op.ccl_broadcast_from_worker0(input_embed)
+        hidden_states = input_embed
         for layer_id, layer in enumerate(self.layers):
             hidden_states = layer(hidden_states, paged_kv_cache, layer_id)
         hidden_states = self.norm(hidden_states)
@@ -265,24 +266,24 @@ class LlamaForCasualLM(nn.Module):  # pylint: disable=too-many-instance-attribut
     def embed(self, input_ids: Tensor):
         return self.model.embed_tokens(input_ids)
 
-    def prefill(self, input_ids: Tensor, paged_kv_cache: PagedKVCache):
+    def prefill(self, input_embed: Tensor, paged_kv_cache: PagedKVCache):
         op_ext.configure()
 
         def _index(x: te.Tensor):  # x[:-1,:]
             b, s, d = x.shape
             return te.compute((b, 1, d), lambda i, _, k: x[i, s - 1, k], name="index")
 
-        hidden_states = self.model(input_ids, paged_kv_cache)
+        hidden_states = self.model(input_embed, paged_kv_cache)
         hidden_states = op.tensor_expr_op(_index, name_hint="index", args=[hidden_states])
         logits = self.lm_head(hidden_states)
         if logits.dtype != "float32":
             logits = logits.astype("float32")
         return logits, paged_kv_cache
 
-    def decode(self, input_ids: Tensor, paged_kv_cache: PagedKVCache):
+    def decode(self, input_embed: Tensor, paged_kv_cache: PagedKVCache):
         op_ext.configure()
 
-        hidden_states = self.model(input_ids, paged_kv_cache)
+        hidden_states = self.model(input_embed, paged_kv_cache)
         logits = self.lm_head(hidden_states)
         if logits.dtype != "float32":
             logits = logits.astype("float32")
@@ -305,38 +306,14 @@ class LlamaForCasualLM(nn.Module):  # pylint: disable=too-many-instance-attribut
     def softmax_with_temperature(self, logits: Tensor, temperature: Tensor):
         return op.softmax(logits / op.reshape(temperature, (temperature.shape[0], 1, 1)), axis=-1)
 
-    def create_flashinfer_paged_kv_cache(
+    def create_paged_kv_cache(
         self,
         max_batch_size: tir.Var,
         max_total_seq_len: tir.Var,
         prefill_chunk_size: tir.Var,
         page_size: tir.Var,
     ) -> PagedKVCache:
-        # Note: Right now we only have FlashInfer-based KV cache supported.
-        # TIR version will be introduced soon.
-        return FlashInferPagedKVCache(
-            max_batch_size=max_batch_size,
-            max_total_seq_len=max_total_seq_len,
-            prefill_chunk_size=prefill_chunk_size,
-            page_size=page_size,
-            num_hidden_layers=self.num_hidden_layers,
-            num_attention_heads=self.num_attention_heads // self.tensor_parallel_shards,
-            num_key_value_heads=self.num_key_value_heads // self.tensor_parallel_shards,
-            head_dim=self.head_dim,
-            rope_mode=RopeMode.NORMAL,
-            rope_scale=1,
-            rope_theta=self.rope_theta,
-            dtype=self.dtype,
-        )
-
-    def create_tir_paged_kv_cache(
-        self,
-        max_batch_size: tir.Var,
-        max_total_seq_len: tir.Var,
-        prefill_chunk_size: tir.Var,
-        page_size: tir.Var,
-    ) -> PagedKVCache:
-        return TIRPagedKVCache(
+        return PagedKVCache.create_generic(
             max_batch_size=max_batch_size,
             max_total_seq_len=max_total_seq_len,
             prefill_chunk_size=prefill_chunk_size,
@@ -352,7 +329,6 @@ class LlamaForCasualLM(nn.Module):  # pylint: disable=too-many-instance-attribut
         )
 
     def get_default_spec(self):
-        batch_size = 1
         mod_spec = {
             "embed": {
                 "input_ids": nn.spec.Tensor([1, "seq_len"], "int32"),
@@ -362,7 +338,7 @@ class LlamaForCasualLM(nn.Module):  # pylint: disable=too-many-instance-attribut
                 },
             },
             "prefill": {
-                "input_ids": nn.spec.Tensor([batch_size, "seq_len"], "int32"),
+                "input_embed": nn.spec.Tensor([1, "seq_len", self.hidden_size], self.dtype),
                 "paged_kv_cache": nn.spec.Object(object_type=PagedKVCache),
                 "$": {
                     "param_mode": "packed",
@@ -370,7 +346,7 @@ class LlamaForCasualLM(nn.Module):  # pylint: disable=too-many-instance-attribut
                 },
             },
             "decode": {
-                "input_ids": nn.spec.Tensor([batch_size, 1], "int32"),
+                "input_embed": nn.spec.Tensor([1, 1, self.hidden_size], self.dtype),
                 "paged_kv_cache": nn.spec.Object(object_type=PagedKVCache),
                 "$": {
                     "param_mode": "packed",
@@ -410,7 +386,7 @@ class LlamaForCasualLM(nn.Module):  # pylint: disable=too-many-instance-attribut
                     "effect_mode": "none",
                 },
             },
-            "create_flashinfer_paged_kv_cache": {
+            "create_paged_kv_cache": {
                 "max_batch_size": int,
                 "max_total_seq_len": int,
                 "prefill_chunk_size": int,
@@ -421,16 +397,4 @@ class LlamaForCasualLM(nn.Module):  # pylint: disable=too-many-instance-attribut
                 },
             },
         }
-        if self.dtype == "float16":
-            # "create_tir_paged_kv_cache" does not support dtype other than fp16 right now.
-            mod_spec["create_tir_paged_kv_cache"] = {
-                "max_batch_size": int,
-                "max_total_seq_len": int,
-                "prefill_chunk_size": int,
-                "page_size": int,
-                "$": {
-                    "param_mode": "none",
-                    "effect_mode": "none",
-                },
-            }
         return nn.spec.ModuleSpec.from_raw(mod_spec, self)

@@ -91,15 +91,12 @@ class LlamaAttentionBatched(LlamaAttentionBase):
                 values_to_cache = nn.emit(take(values, indices_within_window, axis=0))
                 slot_mapping = nn.emit(take(slot_mapping, indices_within_window, axis=0))
 
-            # kv caches are updated inplace, but make it look like a pure operation
+            # kv caches are updated inplace, takes ownership of the arguments
             kv = nn.emit(
-                relax.op.call_pure_packed(
+                relax.op.call_inplace_packed(
                     "tvm.contrib.vllm.reshape_and_cache",
-                    keys_to_cache,
-                    values_to_cache,
-                    k_cache,
-                    v_cache,
-                    slot_mapping,
+                    args=[keys_to_cache, values_to_cache, k_cache, v_cache, slot_mapping],
+                    inplace_indices=[2, 3],
                     sinfo_args=[k_cache.struct_info, v_cache.struct_info],
                 )
             )
@@ -285,7 +282,7 @@ class LlamaForCausalLM(nn.Module):
 
         # Set the cached sin/cos to the maximum of 2048 and max seq len.
         # This will be eliminated further with online rotary embedding calculation.
-        cache_len = te.var("cache_len", "int64")
+        cache_len = te.var("cached_rotary_embedding_len", "int64")
         self.cos_cached = nn.Parameter((cache_len, head_dim), dtype=config.dtype, name="cos_cached")
         self.sin_cached = nn.Parameter((cache_len, head_dim), dtype=config.dtype, name="sin_cached")
         ############ End ############
@@ -455,8 +452,8 @@ def create_evaluate_func(
     """Evaluate logits for the last token in each sequence. Same as prefill but without KV cache."""
     func_name = "evaluate"
 
-    num_token = tvm.tir.SizeVar("num_token", "int64")
-    num_seq = tvm.tir.SizeVar("num_seq", "int64")
+    num_token = tvm.tir.SizeVar("num_tokens_excluding_cache", "int64")
+    num_seq = tvm.tir.SizeVar("batch_size", "int64")
 
     with bb.function(func_name):
         model = LlamaForCausalLM(config, cpu_dev, tvm.tir.SizeVar("vocab_size", "int64"), sep_embed)
@@ -504,8 +501,8 @@ def create_encoding_func(
     """
     func_name = "prefill_with_embed" if sep_embed else "prefill"
 
-    num_token = tvm.tir.SizeVar("num_token", "int64")
-    num_seq = tvm.tir.SizeVar("num_seq", "int64")
+    num_token = tvm.tir.SizeVar("num_tokens_excluding_cache", "int64")
+    num_seq = tvm.tir.SizeVar("batch_size", "int64")
 
     num_inputs = 5
 
@@ -569,7 +566,7 @@ def create_decoding_func(
     """Batched decoding with vLLM paged KV cache."""
     func_name = "decode"
 
-    num_seq = tvm.tir.SizeVar("num_seq", "int64")
+    num_seq = tvm.tir.SizeVar("batch_size", "int64")
     max_num_blocks_per_seq = tvm.tir.SizeVar("max_num_blocks_per_seq", "int64")
 
     with bb.function(func_name):

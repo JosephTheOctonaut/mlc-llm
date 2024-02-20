@@ -97,7 +97,7 @@ Conversation Llama2() {
   Conversation conv;
   conv.name = "llama-2";
   conv.system =
-      ("[INST] <<SYS>>\n\nYou are a helpful, respectful and honest assistant.\n<</SYS>>\n\n ");
+      ("[INST] <<SYS>>\nYou are a helpful, respectful and honest assistant.\n<</SYS>>\n\n ");
   conv.roles = {"[INST]", "[/INST]"};
   conv.messages = {};
   conv.offset = 0;
@@ -172,8 +172,8 @@ Conversation GPT2() {
   conv.roles = {"USER", "ASSISTANT"};
   conv.messages = {};
   conv.offset = 0;
-  conv.separator_style = SeparatorStyle::kSepRoleMsg;
-  conv.seps = {"<|endoftext|>", "<|endoftext|>"};
+  conv.separator_style = SeparatorStyle::kLM;
+  conv.seps = {" "};
   conv.role_msg_sep = ": ";
   conv.role_empty_sep = ":";
   // TODO(mlc-team): add eos to mlc-chat-config
@@ -737,7 +737,8 @@ Conversation Conversation::FromTemplate(const std::string& name) {
       {"glm", GLM},
       {"phi-2", Phi2},
       {"qwen", ChatML},
-      {"stablelm-2", StableLM2}};
+      {"stablelm-2", StableLM2},
+      {"baichuan", ChatML}};
   auto it = factory.find(name);
   if (it == factory.end()) {
     LOG(FATAL) << "Unknown conversation template: " << name;
